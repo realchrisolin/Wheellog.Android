@@ -27,12 +27,15 @@ import com.cooper.wheellog.R
 import com.cooper.wheellog.WheelData
 import com.cooper.wheellog.utils.FileUtil
 import com.cooper.wheellog.utils.PermissionsUtil
+import com.cooper.wheellog.utils.RideLogCsv
 import com.cooper.wheellog.utils.ThemeIconEnum
 import kotlinx.coroutines.*
 import org.koin.compose.koinInject
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+import java.util.TimeZone
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
 
@@ -270,15 +273,57 @@ fun logScreen(appConfig: AppConfig = koinInject())
                     val sdFormatter = SimpleDateFormat("yyyy_MM_dd_HH_mm_ss", Locale.US)
                     val filename = sdFormatter.format(Date()) + ".csv"
                     if (fileUtil.prepareFile(filename, "test")) {
-                        fileUtil.writeLine(
-                        "date,time,latitude,longitude,gps_speed,gps_alt,gps_heading,gps_distance,speed,voltage,phase_current,current,power,torque,pwm,battery_level,distance,totaldistance,system_temp,temp2,tilt,roll,mode,alert\n" +
-                             "2025-01-29,23:05:53.835,53.921541,27.4574593,0.0,259.5,0.0,0,14.72,83.28,0.00,0.88,73.29,0.00,44.06,95,1,4778555,24,0,0.13,1.42,Drive,\n" +
-                             "2025-01-29,23:05:54.021,53.921541,27.4574593,0.0,259.5,0.0,0,19.92,83.28,0.00,1.04,86.61,0.00,59.62,95,1,4778555,24,0,0.14,1.26,Drive,\n" +
-                             "2025-01-29,23:05:54.021,53.921541,27.4574593,0.0,259.5,0.0,0,19.92,83.28,0.00,1.04,86.61,0.00,59.62,95,1,4778555,24,0,0.14,1.26,Drive,\n" +
-                             "2025-01-29,23:05:54.205,53.921541,27.4574593,0.0,259.5,0.0,0,22.05,83.28,0.00,1.33,110.76,0.00,65.99,95,1,4778555,24,0,0.09,0.51,Drive,"
-                        )
+                        fileUtil.writeLine(RideLogCsv.preamble(0))
+                        fileUtil.writeLine(RideLogCsv.HEADER)
+                        val utc = Calendar.getInstance(TimeZone.getTimeZone("UTC"))
+                        fun epoch(minute: Int, second: Int, millis: Int): Long {
+                            utc.set(2025, Calendar.JANUARY, 29, 23, minute, second)
+                            utc.set(Calendar.MILLISECOND, millis)
+                            return utc.timeInMillis
+                        }
+                        fun sample(
+                            epochMs: Long,
+                            speed: Double,
+                            current: Double,
+                            power: Double,
+                            pwm: Double,
+                            tilt: Double,
+                            roll: Double,
+                        ) {
+                            fileUtil.writeLine(
+                                RideLogCsv.dataLine(
+                                    timeUnixMs = epochMs,
+                                    latitude = "53.921541",
+                                    longitude = "27.4574593",
+                                    gpsSpeed = "0.0",
+                                    gpsAltitude = "259.5",
+                                    gpsHeading = "0.0",
+                                    gpsDistanceMeters = 0.0,
+                                    speed = speed,
+                                    voltage = 83.28,
+                                    phaseCurrent = 0.0,
+                                    current = current,
+                                    power = power,
+                                    torque = 0.0,
+                                    pwm = pwm,
+                                    batteryLevel = 95,
+                                    distance = 1,
+                                    totalDistance = 4778555,
+                                    systemTemp = 24,
+                                    temp2 = 0,
+                                    tilt = tilt,
+                                    roll = roll,
+                                    mode = "Drive",
+                                    alert = "",
+                                )
+                            )
+                        }
+                        sample(epoch(5, 53, 835), 14.72, 0.88, 73.29, 44.06, 0.13, 1.42)
+                        sample(epoch(5, 54, 21), 19.92, 1.04, 86.61, 59.62, 0.14, 1.26)
+                        sample(epoch(5, 54, 21), 19.92, 1.04, 86.61, 59.62, 0.14, 1.26)
+                        sample(epoch(5, 54, 205), 22.05, 1.33, 110.76, 65.99, 0.09, 0.51)
                         for (i in 10..59) {
-                            fileUtil.writeLine("2025-01-29,23:$i:00.000,53.921541,27.4574593,0.0,259.5,0.0,0,22.05,83.28,0.00,1.33,110.76,0.00,65.99,95,1,4778555,24,0,0.09,0.51,Drive,")
+                            sample(epoch(i, 0, 0), 22.05, 1.33, 110.76, 65.99, 0.09, 0.51)
                         }
                         fileUtil.close()
                     }

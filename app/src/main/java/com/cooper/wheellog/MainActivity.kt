@@ -852,6 +852,8 @@ class MainActivity : AppCompatActivity() {
             }
         }
         if (loggingService != null) {
+            // A normal unbind does not call onServiceDisconnected.
+            loggingService = null
             try {
                 unbindService(mLoggingServiceConnection)
             } catch (_: Exception) {
@@ -1080,6 +1082,8 @@ class MainActivity : AppCompatActivity() {
     fun toggleLoggingService() {
         val dataLoggerServiceIntent = Intent(applicationContext, LoggingService::class.java)
         if (LoggingService.isInstanceCreated()) {
+            // A normal unbind does not call onServiceDisconnected.
+            loggingService = null
             unbindService(mLoggingServiceConnection)
             if (!onDestroyProcess) {
                 CoroutineScope(Dispatchers.Main + Job()).launch {

@@ -20,20 +20,23 @@ import com.cooper.wheellog.utils.NotificationUtil
 import com.cooper.wheellog.utils.ParserLogToWheelData
 import com.cooper.wheellog.utils.PermissionsUtil.checkExternalFilePermission
 import com.cooper.wheellog.utils.PermissionsUtil.checkLocationPermission
+import com.cooper.wheellog.utils.RideLogCsv
 import com.welie.blessed.ConnectionState
 import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.Channel
 import org.koin.android.ext.android.inject
 import timber.log.Timber
 import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.TimeZone
+import java.util.concurrent.Executors
 
 class LoggingService : Service() {
     private val appConfig: AppConfig by inject()
     private val notifications: NotificationUtil by inject()
     private val dao: TripDao by inject()
-    private var sdf: SimpleDateFormat? = null
     private var mLocation: Location? = null
     private var mLastLocation: Location? = null
     private var mLocationDistance = 0.0
@@ -42,6 +45,14 @@ class LoggingService : Service() {
     private var logLocationData = false
     private lateinit var fileUtil: FileUtil
     private var ioState = CoroutineScope(Dispatchers.IO + Job())
+    private val writerExecutor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "RideLogWriter").apply { isDaemon = true }
+    }
+    private val writerScope = CoroutineScope(SupervisorJob() + writerExecutor.asCoroutineDispatcher())
+    private val rideWrites = Channel<() -> Unit>(Channel.UNLIMITED)
+    private val acceptLock = Any()
+    private var acceptRows = false
+    private var writerJob: Job? = null
 
     fun updateConnectionState(connectionState: ConnectionState) {
         if (logLocationData) {
@@ -94,14 +105,16 @@ class LoggingService : Service() {
             showToast(R.string.logging_error_no_location_permission)
             logLocationData = false
         }
-        sdf = SimpleDateFormat("yyyy-MM-dd,HH:mm:ss.SSS", Locale.US)
         var writeToLastLog = false
         val mac = WheelData.getInstance().mac
         if (appConfig.continueThisDayLog &&
             appConfig.continueThisDayLogMacException != mac
         ) {
             val lastFileUtil = FileUtil.getLastLog(applicationContext)
-            if (lastFileUtil?.file?.path?.contains(mac.replace(':', '_')) == true
+            // An older date,time log is a different schema. Start a new file.
+            if (lastFileUtil != null &&
+                lastFileUtil.file?.path?.contains(mac.replace(':', '_')) == true &&
+                lastFileUtil.inputStream?.use { RideLogCsv.isCurrentLog(it) } == true
             ) {
                 fileUtil = lastFileUtil
                 // parse prev log for filling wheeldata values
@@ -127,7 +140,6 @@ class LoggingService : Service() {
             }
             appConfig.continueThisDayLogMacException = ""
         }
-        var locationHeaderString = ""
         if (logLocationData) {
             val isGPSEnabled = mLocationManager
                 .isProviderEnabled(LocationManager.GPS_PROVIDER)
@@ -149,8 +161,6 @@ class LoggingService : Service() {
                 showToast(R.string.logging_error_network_disabled)
             }
             if (logLocationData) {
-                locationHeaderString =
-                    "latitude,longitude,gps_speed,gps_alt,gps_heading,gps_distance,"
                 mLocation = lastBestLocation
                 mLocationProvider = LocationManager.NETWORK_PROVIDER
                 if (useGPS) {
@@ -165,9 +175,15 @@ class LoggingService : Service() {
                 )
             }
         }
+        fileUtil.enableLineBuffer()
         if (!writeToLastLog) {
-            fileUtil.writeLine("date,time," + locationHeaderString + "speed,voltage,phase_current,current,power,torque,pwm,battery_level,distance,totaldistance,system_temp,temp2,tilt,roll,mode,alert")
+            val offsetMillis = TimeZone.getDefault().getOffset(System.currentTimeMillis())
+            fileUtil.writeLine(RideLogCsv.preamble(offsetMillis))
+            fileUtil.writeLine(RideLogCsv.HEADER)
+            // The header is flushed now so a crash still leaves a readable file.
+            fileUtil.flush()
         }
+        startRideWriter()
         val serviceIntent = Intent(Constants.ACTION_LOGGING_SERVICE_TOGGLED)
         serviceIntent.putExtra(
             Constants.INTENT_EXTRA_LOGGING_FILE_LOCATION,
@@ -191,6 +207,8 @@ class LoggingService : Service() {
             appConfig.lastLocationLongitude = mLastLocation!!.longitude
         }
         val path = fileUtil.absolutePath
+        // Formatting happens on RideLogWriter. Drain it before the file is closed and uploaded.
+        finishRideWriter()
         fileUtil.close()
         Timber.wtf("DataLogger Stopping...")
         notifications.setCustomTitle("Uploading tack...")
@@ -254,57 +272,87 @@ class LoggingService : Service() {
         }
 
     fun updateFile() {
-        var LocationDataString = ""
-        if (logLocationData) {
-            var longitude = ""
-            var latitude = ""
-            var gpsSpeed = ""
-            var gpsAlt = ""
-            var gpsBearing = ""
-            if (mLocation != null) {
-                longitude = mLocation!!.longitude.toString()
-                latitude = mLocation!!.latitude.toString()
-                gpsSpeed = (mLocation!!.speed * 3.6).toString()
-                gpsAlt = mLocation!!.altitude.toString()
-                gpsBearing = mLocation!!.bearing.toString()
-                if (mLastLocation != null) mLocationDistance += mLastLocation!!.distanceTo(mLocation!!)
-                    .toDouble()
-                mLastLocation = mLocation
+        synchronized(acceptLock) {
+            if (!acceptRows) {
+                return
             }
-            LocationDataString = String.format(
-                Locale.US, "%s,%s,%s,%s,%s,%.0f,",
-                latitude,
-                longitude,
-                gpsSpeed,
-                gpsAlt,
-                gpsBearing,
-                mLocationDistance
-            )
+            val sample = captureSample()
+            // toLine() runs on RideLogWriter. The main thread only queued the copied values.
+            rideWrites.trySend {
+                fileUtil.writeLine(sample.toLine())
+            }
         }
+    }
+
+    private fun captureSample(): RideSample {
         val wd = WheelData.getInstance()
-        fileUtil.writeLine(
-            String.format(
-                Locale.US, "%s,%s%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%d,%d,%d,%d,%d,%.2f,%.2f,%s,%s",
-                sdf!!.format(WheelData.getInstance().timeStamp),
-                LocationDataString,
-                wd.speedDouble,
-                wd.voltageDouble,
-                wd.phaseCurrentDouble,
-                wd.currentDouble,
-                wd.powerDouble,
-                wd.torque,
-                wd.calculatedPwm,
-                wd.batteryLevel,
-                wd.distance,
-                wd.totalDistance,
-                wd.temperature,
-                wd.temperature2,
-                wd.angle,
-                wd.roll,
-                wd.modeStr,
-                wd.alert
-            )
+        var latitude: Double? = null
+        var longitude: Double? = null
+        var gpsSpeed: Double? = null
+        var gpsAlt: Double? = null
+        var gpsBearing: Float? = null
+        if (logLocationData && mLocation != null) {
+            longitude = mLocation!!.longitude
+            latitude = mLocation!!.latitude
+            gpsSpeed = mLocation!!.speed * 3.6
+            gpsAlt = mLocation!!.altitude
+            gpsBearing = mLocation!!.bearing
+            if (mLastLocation != null) mLocationDistance += mLastLocation!!.distanceTo(mLocation!!)
+                .toDouble()
+            mLastLocation = mLocation
+        }
+        return RideSample(
+            timeUnixMs = wd.timeStamp,
+            latitude = latitude,
+            longitude = longitude,
+            gpsSpeed = gpsSpeed,
+            gpsAltitude = gpsAlt,
+            gpsHeading = gpsBearing,
+            gpsDistanceMeters = mLocationDistance,
+            speed = wd.speedDouble,
+            voltage = wd.voltageDouble,
+            phaseCurrent = wd.phaseCurrentDouble,
+            current = wd.currentDouble,
+            power = wd.powerDouble,
+            torque = wd.torque,
+            pwm = wd.calculatedPwm,
+            batteryLevel = wd.batteryLevel,
+            distance = wd.distance,
+            totalDistance = wd.totalDistance,
+            systemTemp = wd.temperature,
+            temp2 = wd.temperature2,
+            tilt = wd.angle,
+            roll = wd.roll,
+            mode = wd.modeStr,
+            alert = wd.alert,
         )
+    }
+
+    private fun startRideWriter() {
+        writerJob = writerScope.launch {
+            for (write in rideWrites) {
+                try {
+                    write()
+                } catch (ex: Exception) {
+                    Timber.wtf("Ride log write failed: %s", ex.toString())
+                }
+            }
+        }
+        synchronized(acceptLock) {
+            acceptRows = true
+        }
+    }
+
+    private fun finishRideWriter() {
+        synchronized(acceptLock) {
+            acceptRows = false
+            rideWrites.close()
+        }
+        runBlocking {
+            writerJob?.join()
+        }
+        writerScope.cancel()
+        writerExecutor.shutdown()
     }
 
     // Define a listener that responds to location updates
@@ -343,6 +391,60 @@ class LoggingService : Service() {
 
     private fun showToast(messageId: Int) {
         for (i in 0..3) Toast.makeText(this, messageId, Toast.LENGTH_LONG).show()
+    }
+
+    private class RideSample(
+        val timeUnixMs: Long,
+        val latitude: Double?,
+        val longitude: Double?,
+        val gpsSpeed: Double?,
+        val gpsAltitude: Double?,
+        val gpsHeading: Float?,
+        val gpsDistanceMeters: Double,
+        val speed: Double,
+        val voltage: Double,
+        val phaseCurrent: Double,
+        val current: Double,
+        val power: Double,
+        val torque: Double,
+        val pwm: Double,
+        val batteryLevel: Int,
+        val distance: Int,
+        val totalDistance: Long,
+        val systemTemp: Int,
+        val temp2: Int,
+        val tilt: Double,
+        val roll: Double,
+        val mode: String?,
+        val alert: String?,
+    ) {
+        fun toLine(): String {
+            return RideLogCsv.dataLine(
+                timeUnixMs = timeUnixMs,
+                latitude = latitude?.toString() ?: "",
+                longitude = longitude?.toString() ?: "",
+                gpsSpeed = gpsSpeed?.toString() ?: "",
+                gpsAltitude = gpsAltitude?.toString() ?: "",
+                gpsHeading = gpsHeading?.toString() ?: "",
+                gpsDistanceMeters = gpsDistanceMeters,
+                speed = speed,
+                voltage = voltage,
+                phaseCurrent = phaseCurrent,
+                current = current,
+                power = power,
+                torque = torque,
+                pwm = pwm,
+                batteryLevel = batteryLevel,
+                distance = distance,
+                totalDistance = totalDistance,
+                systemTemp = systemTemp,
+                temp2 = temp2,
+                tilt = tilt,
+                roll = roll,
+                mode = mode,
+                alert = alert,
+            )
+        }
     }
 
     inner class LocalBinder : Binder() {

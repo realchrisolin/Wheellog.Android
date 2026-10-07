@@ -8,6 +8,7 @@ import android.database.Cursor
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
+import android.os.SystemClock
 import android.provider.MediaStore
 import androidx.core.content.FileProvider
 import com.cooper.wheellog.views.TripModel
@@ -26,6 +27,8 @@ class FileUtil(val context: Context) {
     private val androidQCache = Hashtable<String, CachedFile>()
     private var ignoreTimber = false
     private var stream: OutputStream? = null
+    private var lineBuffer: LineBuffer? = null
+    private val bufferLock = Any()
 
     internal class CachedFile {
         var file: File? = null
@@ -144,7 +147,29 @@ class FileUtil(val context: Context) {
         return inputStream?.let { ByteStreams.toByteArray(it) }
     }
 
+    /**
+     * Ride-log rows are written in batches of 8 KB or one second.
+     * close() and flush() write the tail. A killed process can drop the last batch.
+     */
+    fun enableLineBuffer() {
+        synchronized(bufferLock) {
+            if (lineBuffer == null) {
+                lineBuffer = LineBuffer(elapsedMs = { SystemClock.elapsedRealtime() })
+            }
+        }
+    }
+
+    fun flush() {
+        synchronized(bufferLock) {
+            writeChunk(lineBuffer?.take())
+        }
+    }
+
     fun close() {
+        synchronized(bufferLock) {
+            writeChunk(lineBuffer?.take())
+            lineBuffer = null
+        }
         if (stream == null) {
             return
         }
@@ -170,7 +195,30 @@ class FileUtil(val context: Context) {
             return
         }
         try {
-            stream!!.write((line + "\r\n").toByteArray())
+            val bytes = (line + "\r\n").toByteArray()
+            synchronized(bufferLock) {
+                val pending = lineBuffer
+                if (pending != null) {
+                    writeChunk(pending.append(bytes))
+                    return
+                }
+            }
+            stream!!.write(bytes)
+            stream!!.flush()
+        } catch (e: IOException) {
+            if (!ignoreTimber) {
+                Timber.wtf("IOException %s", e.message)
+            }
+            e.printStackTrace()
+        }
+    }
+
+    private fun writeChunk(chunk: ByteArray?) {
+        if (chunk == null || stream == null) {
+            return
+        }
+        try {
+            stream!!.write(chunk)
             stream!!.flush()
         } catch (e: IOException) {
             if (!ignoreTimber) {

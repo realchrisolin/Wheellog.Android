@@ -5,6 +5,7 @@ import android.net.Uri
 import android.os.Build
 import com.cooper.wheellog.R
 import com.cooper.wheellog.utils.LogHeaderEnum
+import com.cooper.wheellog.utils.RideLogCsv
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.inject
 import timber.log.Timber
@@ -51,21 +52,16 @@ object TripParser: KoinComponent {
 
     fun parseFile(context: Context, fileName: String, inputStream: InputStream?): Pair<List<LogTick>, TripDataDbEntry?> {
         lastErrorValue = null
+        header.clear()
         if (inputStream == null) {
             lastErrorValue = context.getString(R.string.error_inputstream_null)
             Timber.wtf(lastErrorValue)
             return Pair(emptyList(), null)
         }
 
-        // read header
         val reader = BufferedReader(InputStreamReader(inputStream))
-        val headerLine = reader.readLine().split(",").toTypedArray()
-        for (i in headerLine.indices) {
-            try {
-                header[LogHeaderEnum.valueOf(headerLine[i].uppercase())] = i
-            } catch (ignored: IllegalArgumentException) {
-            }
-        }
+        val ride = RideLogCsv.Reader(reader)
+        header.putAll(ride.columns)
         if (!header.containsKey(LogHeaderEnum.LATITUDE) || !header.containsKey(LogHeaderEnum.LONGITUDE)) {
             inputStream.close()
             lastErrorValue = context.getString(R.string.error_this_file_without_gps, fileName)
@@ -76,39 +72,49 @@ object TripParser: KoinComponent {
         val sdfTime = SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault())
         val sdfFullDate = SimpleDateFormat("dd HH:mm:ss.SSS", Locale.getDefault())
         val resultList = ArrayList<LogTick>()
+        val useEpoch = header.containsKey(LogHeaderEnum.TIME_UNIX_MS)
 
         try {
-            reader.forEachLine { line ->
-                if (line.isNotEmpty())
-                {
-                    val row = line.split(",")
-                    val timeString = row[header[LogHeaderEnum.TIME]!!]
-                    val dateString = row[header[LogHeaderEnum.DATE]!!]
-                    val logTick = LogTick(
-                        timeString = timeString,
-                        timePlusDayOfWeek = sdfFullDate.parse(
-                            "$dateString $timeString",
-                            ParsePosition(8)
-                        )!!.time / 100f,
-                        time = sdfTime.parse(timeString)!!.time / 100f,
-                        latitude = row[header[LogHeaderEnum.LATITUDE]!!].toDoubleOrNull() ?: 0.0,
-                        longitude = row[header[LogHeaderEnum.LONGITUDE]!!].toDoubleOrNull() ?: 0.0,
-                        altitude = row[header[LogHeaderEnum.GPS_ALT]!!].toDoubleOrNull() ?: 0.0,
-                        batteryLevel = row[header[LogHeaderEnum.BATTERY_LEVEL]!!].toIntOrNull()
-                            ?: 0,
-                        voltage = row[header[LogHeaderEnum.VOLTAGE]!!].toDoubleOrNull() ?: 0.0,
-                        current = row[header[LogHeaderEnum.CURRENT]!!].toDoubleOrNull() ?: 0.0,
-                        power = row[header[LogHeaderEnum.POWER]!!].toDoubleOrNull() ?: 0.0,
-                        speed = row[header[LogHeaderEnum.SPEED]!!].toDoubleOrNull() ?: 0.0,
-                        speedGps = row[header[LogHeaderEnum.GPS_SPEED]!!].toDoubleOrNull() ?: 0.0,
-                        temperature = row[header[LogHeaderEnum.SYSTEM_TEMP]!!].toIntOrNull() ?: 0,
-                        pwm = row[header[LogHeaderEnum.PWM]!!].toDoubleOrNull() ?: 0.0,
-                        distance = row[header[LogHeaderEnum.DISTANCE]!!].toIntOrNull() ?: 0,
-                        totalDistance = row[header[LogHeaderEnum.TOTALDISTANCE]!!].toIntOrNull()
-                            ?: 0
+            while (true) {
+                val row = ride.readRow() ?: break
+                // Charts still plot local civil time. The file offset recovers it from the UTC instant.
+                val dateString: String
+                val timeString: String
+                if (useEpoch) {
+                    val civil = RideLogCsv.civilTime(
+                        ride.field(row, LogHeaderEnum.TIME_UNIX_MS).toLong(),
+                        ride.offsetMillis,
                     )
-                    resultList.add(logTick)
+                    dateString = civil.date
+                    timeString = civil.time
+                } else {
+                    timeString = ride.field(row, LogHeaderEnum.TIME)
+                    dateString = ride.field(row, LogHeaderEnum.DATE)
                 }
+                val logTick = LogTick(
+                    timeString = timeString,
+                    timePlusDayOfWeek = sdfFullDate.parse(
+                        "$dateString $timeString",
+                        ParsePosition(8)
+                    )!!.time / 100f,
+                    time = sdfTime.parse(timeString)!!.time / 100f,
+                    latitude = ride.field(row, LogHeaderEnum.LATITUDE).toDoubleOrNull() ?: 0.0,
+                    longitude = ride.field(row, LogHeaderEnum.LONGITUDE).toDoubleOrNull() ?: 0.0,
+                    altitude = ride.field(row, LogHeaderEnum.GPS_ALT).toDoubleOrNull() ?: 0.0,
+                    batteryLevel = ride.field(row, LogHeaderEnum.BATTERY_LEVEL).toIntOrNull()
+                        ?: 0,
+                    voltage = ride.field(row, LogHeaderEnum.VOLTAGE).toDoubleOrNull() ?: 0.0,
+                    current = ride.field(row, LogHeaderEnum.CURRENT).toDoubleOrNull() ?: 0.0,
+                    power = ride.field(row, LogHeaderEnum.POWER).toDoubleOrNull() ?: 0.0,
+                    speed = ride.field(row, LogHeaderEnum.SPEED).toDoubleOrNull() ?: 0.0,
+                    speedGps = ride.field(row, LogHeaderEnum.GPS_SPEED).toDoubleOrNull() ?: 0.0,
+                    temperature = ride.field(row, LogHeaderEnum.SYSTEM_TEMP).toIntOrNull() ?: 0,
+                    pwm = ride.field(row, LogHeaderEnum.PWM).toDoubleOrNull() ?: 0.0,
+                    distance = ride.field(row, LogHeaderEnum.DISTANCE).toIntOrNull() ?: 0,
+                    totalDistance = ride.field(row, LogHeaderEnum.TOTALDISTANCE).toIntOrNull()
+                        ?: 0
+                )
+                resultList.add(logTick)
             }
         } catch (ex: Exception) {
             lastErrorValue = ex.localizedMessage
