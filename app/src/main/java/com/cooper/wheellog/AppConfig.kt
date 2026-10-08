@@ -286,6 +286,14 @@ class AppConfig(var context: Context): KoinComponent {
         get() = getValue("show_clock", true)
         set(value) = setValue("show_clock", value)
 
+    var clock12Hour: Boolean
+        get() = getValue("clock_12_hour", false)
+        set(value) = setValue("clock_12_hour", value)
+
+    var screenAlwaysOn: Boolean
+        get() = getValue("screen_always_on", false)
+        set(value) = setValue("screen_always_on", value)
+
     var mibandFixRs: Boolean
         get() = getValue(R.string.miband_fixrs_enable, false)
         set(value) {

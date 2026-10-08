@@ -21,6 +21,11 @@
         android:icon="@drawable/ic_action_watch_white"
         android:title="@string/start_pebble_service" />
     <item
+        android:id="@+id/miScreen"
+        app:showAsAction="always"
+        android:icon="@drawable/ic_action_screen_white"
+        android:title="@string/keep_screen_on" />
+    <item
         android:id="@+id/miBand"
         android:icon="@drawable/ajdm_ic_mi_med"
         android:title="@string/miband_desc"

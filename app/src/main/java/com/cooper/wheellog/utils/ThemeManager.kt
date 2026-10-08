@@ -67,6 +67,8 @@ object ThemeManager: KoinComponent {
         original[ThemeIconEnum.MenuWheelOff] = R.drawable.ic_action_wheel_white
         original[ThemeIconEnum.MenuSettings] = R.drawable.ic_baseline_settings_24
         original[ThemeIconEnum.MenuBluetooth] = R.drawable.ic_action_bluetooth_searching_white
+        original[ThemeIconEnum.MenuScreenOn] = R.drawable.ic_action_screen_orange
+        original[ThemeIconEnum.MenuScreenOff] = R.drawable.ic_action_screen_white
         ajdm[ThemeIconEnum.MenuWatchOn] = R.drawable.ajdm_watch_g
         ajdm[ThemeIconEnum.MenuWatchOff] = R.drawable.ajdm_watch_new
         ajdm[ThemeIconEnum.MenuMiBandAlarm] = R.drawable.ajdm_ic_mi_alarm
@@ -80,6 +82,8 @@ object ThemeManager: KoinComponent {
         ajdm[ThemeIconEnum.MenuWheelOff] = R.drawable.ajdm_wheel_new
         ajdm[ThemeIconEnum.MenuSettings] = R.drawable.ajdm_sett3_new
         ajdm[ThemeIconEnum.MenuBluetooth] = R.drawable.ajdm_bt_new
+        ajdm[ThemeIconEnum.MenuScreenOn] = R.drawable.ic_action_screen_orange
+        ajdm[ThemeIconEnum.MenuScreenOff] = R.drawable.ic_action_screen_white
         // settings page
         original[ThemeIconEnum.SettingsSpeedometer] = R.drawable.ic_speedometer_white_24dp
         original[ThemeIconEnum.SettingsLog] = R.drawable.ic_show_chart_white_24dp

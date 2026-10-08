@@ -24,6 +24,8 @@ enum class ThemeIconEnum {
     MenuWheelOff,
     MenuSettings,
     MenuBluetooth,
+    MenuScreenOn,
+    MenuScreenOff,
     SettingsWheel,
     SettingsSpeedometer,
     SettingsLog,

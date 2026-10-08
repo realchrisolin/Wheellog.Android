@@ -21,6 +21,7 @@ import android.view.KeyEvent
 import android.view.Menu
 import android.view.MenuItem
 import android.view.View
+import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -93,6 +94,7 @@ class MainActivity : AppCompatActivity() {
     private var miWatch: MenuItem? = null
     private var miBand: MenuItem? = null
     private var miLogging: MenuItem? = null
+    private var miScreen: MenuItem? = null
     private var mBluetoothAdapter: BluetoothAdapter? = null
     private var mDeviceAddress: String = ""
     private var mConnectionState = ConnectionState.DISCONNECTED
@@ -567,6 +569,13 @@ class MainActivity : AppCompatActivity() {
         } else {
             miWatch!!.setIcon(ThemeManager.getId(ThemeIconEnum.MenuWatchOff))
         }
+        if (appConfig.screenAlwaysOn) {
+            miScreen!!.setTitle(R.string.allow_screen_sleep)
+            miScreen!!.setIcon(ThemeManager.getId(ThemeIconEnum.MenuScreenOn))
+        } else {
+            miScreen!!.setTitle(R.string.keep_screen_on)
+            miScreen!!.setIcon(ThemeManager.getId(ThemeIconEnum.MenuScreenOff))
+        }
         if (LoggingService.isInstanceCreated()) {
             miLogging!!.setTitle(R.string.stop_data_service)
             miLogging!!.setIcon(ThemeManager.getId(ThemeIconEnum.MenuLogOn))
@@ -747,6 +756,10 @@ class MainActivity : AppCompatActivity() {
         } else {
             binding.textClock.visibility = View.GONE
         }
+        // Set both patterns so the choice wins over the system 12/24-hour setting.
+        val format = if (appConfig.clock12Hour) "h:mm:ss a" else "HH:mm:ss"
+        binding.textClock.format12Hour = format
+        binding.textClock.format24Hour = format
         supportActionBar?.setDisplayShowTitleEnabled(false)
     }
 
@@ -779,9 +792,18 @@ class MainActivity : AppCompatActivity() {
         pagerAdapter.updatePageOfTrips()
 
         checkClockVisible()
+        applyKeepScreenOn()
 
         // Checking GPS is enabled
         DialogHelper.checkAndShowLocationDialog(this)
+    }
+
+    private fun applyKeepScreenOn() {
+        if (appConfig.screenAlwaysOn) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -905,6 +927,7 @@ class MainActivity : AppCompatActivity() {
             miWatch = findItem(R.id.miWatch)
             miBand = findItem(R.id.miBand)
             miLogging = findItem(R.id.miLogging)
+            miScreen = findItem(R.id.miScreen)
         }
 
         // Themes
@@ -973,6 +996,12 @@ class MainActivity : AppCompatActivity() {
             }
             R.id.miWatch -> {
                 toggleWatch()
+                true
+            }
+            R.id.miScreen -> {
+                appConfig.screenAlwaysOn = !appConfig.screenAlwaysOn
+                applyKeepScreenOn()
+                setMenuIconStates()
                 true
             }
             R.id.miBand -> {

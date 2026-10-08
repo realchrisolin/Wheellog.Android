@@ -239,9 +239,16 @@ fun applicationScreen(
             switchPref(
                 name = stringResource(R.string.show_clock_title),
                 default = appConfig.showClock,
-                showDiv = false,
             ) {
                 appConfig.showClock = it
+            }
+            switchPref(
+                name = stringResource(R.string.clock_12_hour_title),
+                desc = stringResource(R.string.clock_12_hour_description),
+                default = appConfig.clock12Hour,
+                showDiv = false,
+            ) {
+                appConfig.clock12Hour = it
             }
         }
 

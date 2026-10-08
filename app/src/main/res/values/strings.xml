@@ -36,6 +36,8 @@
     <string name="disconnect_from_wheel">Disconnect from Wheel</string>
     <string name="waiting_for_device">Waiting for device</string>
     <string name="start_pebble_service">Start Pebble Dash</string>
+    <string name="keep_screen_on">Keep screen on</string>
+    <string name="allow_screen_sleep">Allow screen to sleep</string>
     <string name="show_settings">Show settings menu</string>
     <string name="miband_desc">Change Mi Band mode</string>
     <string name="stop_pebble_service">Stop Pebble Dash</string>
@@ -690,6 +692,8 @@
     <string name="main_menu_buttons_title">Main menu buttons</string>
     <string name="reset_extremum_values_title">Reset max/min values</string>
     <string name="show_clock_title">Show the clock on the main screen</string>
+    <string name="clock_12_hour_title">12-hour clock</string>
+    <string name="clock_12_hour_description">Show the main screen clock with AM/PM</string>
     <string name="swap_speedpwm_title">Show PWM instead of Speed</string>
     <string name="swap_speedpwm_description">Show PWM instead of Speed and Speed instead of short PWM</string>
     <string name="import_log">Import exits log</string>
